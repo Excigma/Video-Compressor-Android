@@ -103,6 +103,16 @@ class CompressorViewModelTest {
     }
 
     @Test
+    fun testRetryBitrate_scalesToTargetSize() {
+        assertEquals(5_000_000L, viewModel.retryBitrate(10_000_000L, 95L, 190L))
+    }
+
+    @Test
+    fun testRetryBitrate_rejectsNonDecreasingResult() {
+        assertNull(viewModel.retryBitrate(1_000L, 100L, 100L))
+    }
+
+    @Test
     fun testSetVideoCodec() {
         viewModel.setVideoCodec(MimeTypes.VIDEO_H264)
         assertEquals(MimeTypes.VIDEO_H264, viewModel.uiState.value.videoCodec)

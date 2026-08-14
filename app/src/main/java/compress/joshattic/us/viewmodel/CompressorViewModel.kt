@@ -94,6 +94,8 @@ class CompressorViewModel(application: Application) : AndroidViewModel(applicati
 
     companion object {
         private const val COPY_BUFFER_BYTES = 1024 * 1024
+        private const val FIT_PERCENT = 5
+        private const val MAX_ENCODE_ATTEMPTS = 5
         private val cachedCodecInfos: List<android.media.MediaCodecInfo> by lazy {
             try {
                 MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos.toList()
@@ -1392,14 +1394,13 @@ class CompressorViewModel(application: Application) : AndroidViewModel(applicati
         .setHdrMode(hdrMode)
         .build()
 
-        val finalSize = encodeAtBitrate(
+        val finalSize = encodeWithRetry(
             context = context,
             state = currentState,
             plan = plan,
             decoderFactory = decoderFactory,
             composition = composition,
             outputFile = outputFile,
-            videoBitrate = currentState.targetBitrate.toLong(),
             audioBitrate = audioBitrateToUse,
             audioPassthrough = audioPassthrough
         ) ?: return@launch
@@ -1497,6 +1498,70 @@ class CompressorViewModel(application: Application) : AndroidViewModel(applicati
                 !audioPassthrough && primaryEncoderFactory.audioNeedsEncoding()
             override fun videoNeedsEncoding(): Boolean = primaryEncoderFactory.videoNeedsEncoding()
         }
+    }
+
+    private suspend fun encodeWithRetry(
+        context: Context,
+        state: CompressorUiState,
+        plan: CompressionPlan,
+        decoderFactory: DefaultDecoderFactory,
+        composition: Composition,
+        outputFile: File,
+        audioBitrate: Int,
+        audioPassthrough: Boolean
+    ): Long? {
+        val limitBytes = (state.targetSizeMb * 1024.0 * 1024.0).toLong()
+        if (limitBytes <= 0) {
+            return encodeAtBitrate(
+                context = context,
+                state = state,
+                plan = plan,
+                decoderFactory = decoderFactory,
+                composition = composition,
+                outputFile = outputFile,
+                videoBitrate = state.targetBitrate.toLong(),
+                audioBitrate = audioBitrate,
+                audioPassthrough = audioPassthrough
+            )
+        }
+
+        val targetBytes = limitBytes * (100 - FIT_PERCENT) / 100
+        var bitrate = state.targetBitrate.toLong()
+
+        repeat(MAX_ENCODE_ATTEMPTS) {
+            val outputSize = encodeAtBitrate(
+                context = context,
+                state = state,
+                plan = plan,
+                decoderFactory = decoderFactory,
+                composition = composition,
+                outputFile = outputFile,
+                videoBitrate = bitrate,
+                audioBitrate = audioBitrate,
+                audioPassthrough = audioPassthrough
+            ) ?: return null
+            if (outputSize <= limitBytes) return outputSize
+
+            bitrate = retryBitrate(bitrate, targetBytes, outputSize) ?: return targetSizeError()
+        }
+
+        return targetSizeError()
+    }
+
+    internal fun retryBitrate(currentBitrate: Long, targetBytes: Long, outputBytes: Long): Long? {
+        if (currentBitrate <= 0 || targetBytes <= 0 || outputBytes <= 0) return null
+        val nextBitrate = (currentBitrate * targetBytes.toDouble() / outputBytes).toLong()
+        return nextBitrate.takeIf { it in 1L until currentBitrate }
+    }
+
+    private fun targetSizeError(): Long? {
+        _uiState.update {
+            it.copy(
+                isCompressing = false,
+                error = getApplication<Application>().getString(R.string.error_target_size_cannot_fit)
+            )
+        }
+        return null
     }
 
     private suspend fun encodeAtBitrate(

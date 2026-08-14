@@ -49,6 +49,7 @@ import compress.joshattic.us.model.TargetSizePreset
 import compress.joshattic.us.utils.VolumeAudioProcessor
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -1316,9 +1317,6 @@ class CompressorViewModel(application: Application) : AndroidViewModel(applicati
         if (outputFile.exists()) {
             outputFile.delete()
         }
-        val outputPath = outputFile.absolutePath
-
-        val targetBitrate = currentState.targetBitrate.toLong()
 
         val sourceAudioBitrate = probe.audioBitrate
         val audioBitrateToUse = if (currentState.audioBitrate == 0) {
@@ -1345,151 +1343,19 @@ class CompressorViewModel(application: Application) : AndroidViewModel(applicati
             .setEnableDecoderFallback(true)
             .build()
 
-        val cbrEncoderFactory = DefaultEncoderFactory.Builder(context)
-            .setEnableFallback(true)
-            .setRequestedVideoEncoderSettings(
-                VideoEncoderSettings.Builder()
-                    .setBitrate(targetBitrate.toInt())
-                    .setBitrateMode(android.media.MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
-                    .build()
-            )
-            .setRequestedAudioEncoderSettings(
-                AudioEncoderSettings.Builder()
-                    .setBitrate(audioBitrateToUse)
-                    .build()
-            )
-            .build()
-
-        val vbrEncoderFactory = DefaultEncoderFactory.Builder(context)
-            .setEnableFallback(true)
-            .setRequestedVideoEncoderSettings(
-                VideoEncoderSettings.Builder()
-                    .setBitrate(targetBitrate.toInt())
-                    .setBitrateMode(android.media.MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
-                    .build()
-            )
-            .setRequestedAudioEncoderSettings(
-                AudioEncoderSettings.Builder()
-                    .setBitrate(audioBitrateToUse)
-                    .build()
-            )
-            .build()
-
-        val isMediaTek = isMediaTekDeviceOrEncoder(videoMimeType)
-        val primaryEncoderFactory = if (isMediaTek) vbrEncoderFactory else cbrEncoderFactory
-        val fallbackEncoderFactory = if (isMediaTek) cbrEncoderFactory else vbrEncoderFactory
-            
-        val encoderFactory = object : androidx.media3.transformer.Codec.EncoderFactory {
-            @Throws(androidx.media3.transformer.ExportException::class)
-            override fun createForAudioEncoding(format: androidx.media3.common.Format, logSessionId: android.media.metrics.LogSessionId?): androidx.media3.transformer.Codec {
-                return primaryEncoderFactory.createForAudioEncoding(format, logSessionId)
-            }
-
-            @Throws(androidx.media3.transformer.ExportException::class)
-            override fun createForVideoEncoding(format: androidx.media3.common.Format, logSessionId: android.media.metrics.LogSessionId?): androidx.media3.transformer.Codec {
-                val targetFps = if (plan.outputFps > 0) plan.outputFps.toFloat() else currentState.originalFps
-                var modifiedFormatBuilder = format.buildUpon()
-                if (targetFps > 0f) {
-                    modifiedFormatBuilder.setFrameRate(targetFps)
-                }
-                if (format.colorInfo == null || !androidx.media3.common.ColorInfo.isTransferHdr(format.colorInfo)) {
-                     modifiedFormatBuilder.setColorInfo(null)
-                }
-                val modifiedFormat = modifiedFormatBuilder.build()
-
-                return try {
-                    primaryEncoderFactory.createForVideoEncoding(modifiedFormat, logSessionId)
-                } catch (e: androidx.media3.transformer.ExportException) {
-                    fallbackEncoderFactory.createForVideoEncoding(modifiedFormat, logSessionId)
-                }
-            }
-
-            override fun audioNeedsEncoding(): Boolean =
-                !audioPassthrough && primaryEncoderFactory.audioNeedsEncoding()
-            override fun videoNeedsEncoding(): Boolean = primaryEncoderFactory.videoNeedsEncoding()
-        }
-
-        val transformerBuilder = Transformer.Builder(context)
-            .setVideoMimeType(videoMimeType)
-            .setMaxDelayBetweenMuxerSamplesMs(30_000)
-            .apply {
-                if (!audioPassthrough) {
-                    setAudioMimeType(MimeTypes.AUDIO_AAC)
-                }
-            }
-            .setAssetLoaderFactory(androidx.media3.transformer.DefaultAssetLoaderFactory(context, decoderFactory, androidx.media3.common.util.Clock.DEFAULT, null))
-            .setEncoderFactory(encoderFactory)
-            .addListener(object : Transformer.Listener {
-                override fun onCompleted(composition: Composition, exportResult: ExportResult) {
-                     val finalSize = outputFile.length()
-                     val savedBytes = currentState.originalSize - finalSize
-                     var newTotal = _uiState.value.totalSavedBytes
-                     
-                     if (savedBytes > 0) {
-                         newTotal += savedBytes
-                         prefs.edit { putLong("total_saved_bytes", newTotal) }
-                     }
-
-                     _uiState.update { 
-                         it.copy(
-                             isCompressing = false, 
-                             progress = 1f, 
-                             compressedUri = Uri.fromFile(outputFile),
-                             compressedSize = finalSize,
-                             totalSavedBytes = newTotal
-                         ) 
-                     }
-                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
-                         _uiState.value.autoSaveToPhotos
-                     ) {
-                         saveCompressedOutput(getApplication())
-                     }
-                }
-
-                override fun onError(composition: Composition, exportResult: ExportResult, exportException: ExportException) {
-                    val app = getApplication<Application>()
-                    _uiState.update { 
-                        val isCodecError = exportException.errorCode == ExportException.ERROR_CODE_DECODER_INIT_FAILED ||
-                                           exportException.errorCode == ExportException.ERROR_CODE_ENCODER_INIT_FAILED
-                        val isDecoderInitError = exportException.errorCode == ExportException.ERROR_CODE_DECODER_INIT_FAILED
-                        val isEncoderInitError = exportException.errorCode == ExportException.ERROR_CODE_ENCODER_INIT_FAILED
-                        val isMuxerError = exportException.errorCode == ExportException.ERROR_CODE_MUXING_FAILED
-                        val isHuawei = android.os.Build.MANUFACTURER.equals("HUAWEI", ignoreCase = true)
-
-                        val errorMsg = when {
-                            isMuxerError && isHuawei -> app.getString(R.string.error_huawei_muxer)
-                            isDecoderInitError -> app.getString(R.string.error_decoder_config_unsupported)
-                            isEncoderInitError -> app.getString(R.string.error_encoder_config_unsupported)
-                            isCodecError -> app.getString(R.string.error_codec_unsupported)
-                            else -> exportException.localizedMessage ?: app.getString(R.string.error_unknown)
-                        }
-
-                        it.copy(
-                            isCompressing = false, 
-                            error = errorMsg,
-                            errorLog = exportException.stackTraceToString()
-                        ) 
-                    }
-                }
-            })
-
-        val transformer = transformerBuilder.build()
-        
-        activeTransformer = transformer
-            
         val effectsList = mutableListOf<Effect>()
 
-           if (plan.outputHeight > 0 && plan.outputHeight != currentState.originalHeight) {
-             val aspectRatio = if (currentState.originalHeight > 0) currentState.originalWidth.toFloat() / currentState.originalHeight else 16f/9f
-                var width = (plan.outputHeight * aspectRatio).toInt()
-                var height = plan.outputHeight
+        if (plan.outputHeight > 0 && plan.outputHeight != currentState.originalHeight) {
+            val aspectRatio = if (currentState.originalHeight > 0) currentState.originalWidth.toFloat() / currentState.originalHeight else 16f / 9f
+            var width = (plan.outputHeight * aspectRatio).toInt()
+            var height = plan.outputHeight
 
-              if (width % 2 != 0) width -= 1
-              if (height % 2 != 0) height -= 1
+            if (width % 2 != 0) width -= 1
+            if (height % 2 != 0) height -= 1
 
-              if (width > 0 && height > 0) {
-                  effectsList.add(Presentation.createForWidthAndHeight(width, height, Presentation.LAYOUT_SCALE_TO_FIT))
-              }
+            if (width > 0 && height > 0) {
+                effectsList.add(Presentation.createForWidthAndHeight(width, height, Presentation.LAYOUT_SCALE_TO_FIT))
+            }
         }
 
         val mediaItem = MediaItem.fromUri(inputUri)
@@ -1526,19 +1392,199 @@ class CompressorViewModel(application: Application) : AndroidViewModel(applicati
         .setHdrMode(hdrMode)
         .build()
 
-        transformer.start(composition, outputPath)
-        
-        compressionJob = viewModelScope.launch {
+        val finalSize = encodeAtBitrate(
+            context = context,
+            state = currentState,
+            plan = plan,
+            decoderFactory = decoderFactory,
+            composition = composition,
+            outputFile = outputFile,
+            videoBitrate = currentState.targetBitrate.toLong(),
+            audioBitrate = audioBitrateToUse,
+            audioPassthrough = audioPassthrough
+        ) ?: return@launch
+
+        val savedBytes = currentState.originalSize - finalSize
+        var newTotal = _uiState.value.totalSavedBytes
+        if (savedBytes > 0) {
+            newTotal += savedBytes
+            prefs.edit { putLong("total_saved_bytes", newTotal) }
+        }
+
+        _uiState.update {
+            it.copy(
+                isCompressing = false,
+                progress = 1f,
+                compressedUri = Uri.fromFile(outputFile),
+                compressedSize = finalSize,
+                totalSavedBytes = newTotal
+            )
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && _uiState.value.autoSaveToPhotos) {
+            saveCompressedOutput(getApplication())
+        }
+    }.also { compressionJob = it }
+
+    private fun createEncoderFactory(
+        context: Context,
+        state: CompressorUiState,
+        plan: CompressionPlan,
+        videoBitrate: Long,
+        audioBitrate: Int,
+        audioPassthrough: Boolean
+    ): androidx.media3.transformer.Codec.EncoderFactory {
+        val cbrEncoderFactory = DefaultEncoderFactory.Builder(context)
+            .setEnableFallback(true)
+            .setRequestedVideoEncoderSettings(
+                VideoEncoderSettings.Builder()
+                    .setBitrate(videoBitrate.toInt())
+                    .setBitrateMode(android.media.MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
+                    .build()
+            )
+            .setRequestedAudioEncoderSettings(
+                AudioEncoderSettings.Builder()
+                    .setBitrate(audioBitrate)
+                    .build()
+            )
+            .build()
+
+        val vbrEncoderFactory = DefaultEncoderFactory.Builder(context)
+            .setEnableFallback(true)
+            .setRequestedVideoEncoderSettings(
+                VideoEncoderSettings.Builder()
+                    .setBitrate(videoBitrate.toInt())
+                    .setBitrateMode(android.media.MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
+                    .build()
+            )
+            .setRequestedAudioEncoderSettings(
+                AudioEncoderSettings.Builder()
+                    .setBitrate(audioBitrate)
+                    .build()
+            )
+            .build()
+
+        val isMediaTek = isMediaTekDeviceOrEncoder(plan.outputVideoMimeType)
+        val primaryEncoderFactory = if (isMediaTek) vbrEncoderFactory else cbrEncoderFactory
+        val fallbackEncoderFactory = if (isMediaTek) cbrEncoderFactory else vbrEncoderFactory
+
+        return object : androidx.media3.transformer.Codec.EncoderFactory {
+            @Throws(androidx.media3.transformer.ExportException::class)
+            override fun createForAudioEncoding(format: androidx.media3.common.Format, logSessionId: android.media.metrics.LogSessionId?): androidx.media3.transformer.Codec {
+                return primaryEncoderFactory.createForAudioEncoding(format, logSessionId)
+            }
+
+            @Throws(androidx.media3.transformer.ExportException::class)
+            override fun createForVideoEncoding(format: androidx.media3.common.Format, logSessionId: android.media.metrics.LogSessionId?): androidx.media3.transformer.Codec {
+                val targetFps = if (plan.outputFps > 0) plan.outputFps.toFloat() else state.originalFps
+                val modifiedFormatBuilder = format.buildUpon()
+                if (targetFps > 0f) {
+                    modifiedFormatBuilder.setFrameRate(targetFps)
+                }
+                if (format.colorInfo == null || !androidx.media3.common.ColorInfo.isTransferHdr(format.colorInfo)) {
+                    modifiedFormatBuilder.setColorInfo(null)
+                }
+                val modifiedFormat = modifiedFormatBuilder.build()
+
+                return try {
+                    primaryEncoderFactory.createForVideoEncoding(modifiedFormat, logSessionId)
+                } catch (e: androidx.media3.transformer.ExportException) {
+                    fallbackEncoderFactory.createForVideoEncoding(modifiedFormat, logSessionId)
+                }
+            }
+
+            override fun audioNeedsEncoding(): Boolean =
+                !audioPassthrough && primaryEncoderFactory.audioNeedsEncoding()
+            override fun videoNeedsEncoding(): Boolean = primaryEncoderFactory.videoNeedsEncoding()
+        }
+    }
+
+    private suspend fun encodeAtBitrate(
+        context: Context,
+        state: CompressorUiState,
+        plan: CompressionPlan,
+        decoderFactory: DefaultDecoderFactory,
+        composition: Composition,
+        outputFile: File,
+        videoBitrate: Long,
+        audioBitrate: Int,
+        audioPassthrough: Boolean
+    ): Long? {
+        if (!_uiState.value.isCompressing) return null
+        if (outputFile.exists()) outputFile.delete()
+        _uiState.update { it.copy(progress = 0f, currentOutputSize = 0L) }
+
+        val deferred = CompletableDeferred<ExportException?>()
+        val transformer = Transformer.Builder(context)
+            .setVideoMimeType(plan.outputVideoMimeType)
+            .setMaxDelayBetweenMuxerSamplesMs(30_000)
+            .apply {
+                if (!audioPassthrough) {
+                    setAudioMimeType(MimeTypes.AUDIO_AAC)
+                }
+            }
+            .setAssetLoaderFactory(androidx.media3.transformer.DefaultAssetLoaderFactory(context, decoderFactory, androidx.media3.common.util.Clock.DEFAULT, null))
+            .setEncoderFactory(
+                createEncoderFactory(context, state, plan, videoBitrate, audioBitrate, audioPassthrough)
+            )
+            .addListener(object : Transformer.Listener {
+                override fun onCompleted(composition: Composition, exportResult: ExportResult) {
+                    deferred.complete(null)
+                }
+
+                override fun onError(composition: Composition, exportResult: ExportResult, exportException: ExportException) {
+                    deferred.complete(exportException)
+                }
+            })
+            .build()
+        activeTransformer = transformer
+
+        transformer.start(composition, outputFile.absolutePath)
+
+        val progressJob = viewModelScope.launch {
             val progressHolder = androidx.media3.transformer.ProgressHolder()
-            while (_uiState.value.isCompressing) {
-                val state = transformer.getProgress(progressHolder)
-                if (state != Transformer.PROGRESS_STATE_NOT_STARTED) {
+            while (!deferred.isCompleted) {
+                val progressState = transformer.getProgress(progressHolder)
+                if (progressState != Transformer.PROGRESS_STATE_NOT_STARTED) {
                     val currentSize = outputFile.length()
                     _uiState.update { it.copy(progress = progressHolder.progress / 100f, currentOutputSize = currentSize) }
                 }
                 kotlinx.coroutines.delay(200)
             }
         }
+
+        try {
+            val exportException = deferred.await()
+            if (exportException != null) {
+                val (errorMsg, errorLog) = encodeErrorMessage(exportException)
+                _uiState.update { it.copy(isCompressing = false, error = errorMsg, errorLog = errorLog) }
+                return null
+            }
+            return outputFile.length()
+        } finally {
+            if (!deferred.isCompleted) transformer.cancel()
+            progressJob.cancel()
+            if (activeTransformer === transformer) activeTransformer = null
+        }
+    }
+
+    private fun encodeErrorMessage(exportException: ExportException): Pair<String, String> {
+        val app = getApplication<Application>()
+        val isCodecError = exportException.errorCode == ExportException.ERROR_CODE_DECODER_INIT_FAILED ||
+                           exportException.errorCode == ExportException.ERROR_CODE_ENCODER_INIT_FAILED
+        val isDecoderInitError = exportException.errorCode == ExportException.ERROR_CODE_DECODER_INIT_FAILED
+        val isEncoderInitError = exportException.errorCode == ExportException.ERROR_CODE_ENCODER_INIT_FAILED
+        val isMuxerError = exportException.errorCode == ExportException.ERROR_CODE_MUXING_FAILED
+        val isHuawei = android.os.Build.MANUFACTURER.equals("HUAWEI", ignoreCase = true)
+
+        val errorMsg = when {
+            isMuxerError && isHuawei -> app.getString(R.string.error_huawei_muxer)
+            isDecoderInitError -> app.getString(R.string.error_decoder_config_unsupported)
+            isEncoderInitError -> app.getString(R.string.error_encoder_config_unsupported)
+            isCodecError -> app.getString(R.string.error_codec_unsupported)
+            else -> exportException.localizedMessage ?: app.getString(R.string.error_unknown)
+        }
+        return errorMsg to exportException.stackTraceToString()
     }
 
     internal fun createMediaItemSequence(

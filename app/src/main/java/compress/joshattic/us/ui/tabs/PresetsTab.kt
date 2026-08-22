@@ -159,7 +159,7 @@ fun PresetsTab(state: CompressorUiState, viewModel: CompressorViewModel) {
                 sizePresets.forEach { preset ->
                     val interactionSource = remember { MutableInteractionSource() }
                     FilterChip(
-                        selected = state.targetSizeMb == preset.sizeMb,
+                        selected = state.useTargetSizeMode && state.targetSizeMb == preset.sizeMb,
                         onClick = { 
                             haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                             viewModel.setTargetSize(preset.sizeMb) 

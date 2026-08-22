@@ -437,6 +437,7 @@ class CompressorViewModel(application: Application) : AndroidViewModel(applicati
                     durationMs = duration,
                     originalName = originalName,
                     targetSizeMb = defaultTargetMb,
+                    useTargetSizeMode = false,
                     targetResolutionHeight = targetHeight,
                     targetFps = targetFpsVal,
                      videoCodec = preferredCodec,
@@ -505,6 +506,7 @@ class CompressorViewModel(application: Application) : AndroidViewModel(applicati
                     targetResolutionHeight = targetHeight,
                     targetFps = targetFpsVal,
                     targetSizeMb = targetMb,
+                    useTargetSizeMode = false,
                     audioBitrate = config.audioBitrate,
                     audioBitrateLocked = true,
                     targetResolutionLocked = true,
@@ -1005,7 +1007,9 @@ class CompressorViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun setTargetSize(mb: Float) {
-        _uiState.update { it.copy(targetSizeMb = mb, activePreset = QualityPreset.CUSTOM).autoAdjust(mb) }
+        _uiState.update {
+            it.copy(targetSizeMb = mb, useTargetSizeMode = true, activePreset = QualityPreset.CUSTOM).autoAdjust(mb)
+        }
     }
 
     fun setVideoCodec(codec: String) {
@@ -1510,7 +1514,11 @@ class CompressorViewModel(application: Application) : AndroidViewModel(applicati
         audioBitrate: Int,
         audioPassthrough: Boolean
     ): Long? {
-        val limitBytes = (state.targetSizeMb * 1024.0 * 1024.0).toLong()
+        val limitBytes = if (state.useTargetSizeMode) {
+            (state.targetSizeMb * 1024.0 * 1024.0).toLong()
+        } else {
+            0L
+        }
         if (limitBytes <= 0) {
             return encodeAtBitrate(
                 context = context,

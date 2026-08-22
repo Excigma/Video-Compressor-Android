@@ -69,6 +69,11 @@ fun ConfigScreen(
     val scope = rememberCoroutineScope()
     val tabs = listOf(stringResource(R.string.tab_presets), stringResource(R.string.tab_video), stringResource(R.string.tab_audio))
     val haptics = LocalHapticFeedback.current
+    val compressionButtonText = if (state.useTargetSizeMode) {
+        stringResource(R.string.compress_to_target_size, state.formattedTargetSize)
+    } else {
+        stringResource(R.string.start_compression)
+    }
 
     val originalMb = state.originalSize / (1024f * 1024f)
     val actualEst = maxOf(state.targetSizeMb, state.minimumSizeMb)
@@ -185,7 +190,7 @@ fun ConfigScreen(
                                 .expressiveScale(interactionSource),
                             shape = RoundedCornerShape(24.dp)
                         ) {
-                            Text(stringResource(R.string.start_compression), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                            Text(compressionButtonText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -306,7 +311,7 @@ fun ConfigScreen(
                             .expressiveScale(interactionSource),
                         shape = RoundedCornerShape(24.dp)
                     ) {
-                        Text(stringResource(R.string.start_compression), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        Text(compressionButtonText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -425,7 +430,7 @@ fun ConfigScreen(
                                 .expressiveScale(interactionSource),
                             shape = RoundedCornerShape(24.dp)
                         ) {
-                            Text(stringResource(R.string.start_compression), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                            Text(compressionButtonText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }

@@ -2,6 +2,7 @@ package compress.joshattic.us
 
 import compress.joshattic.us.model.CompressorUiState
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -105,7 +106,8 @@ class CompressorUiStateTest {
             audioBitrate = 320_000,
             audioBitrateLocked = true,
             targetResolutionLocked = true,
-            targetFpsLocked = true
+            targetFpsLocked = true,
+            useTargetSizeMode = true
         )
 
         val adjustedState = initialState.autoAdjust(1f)
@@ -114,6 +116,29 @@ class CompressorUiStateTest {
         assertEquals(2160, adjustedState.targetResolutionHeight)
         assertEquals(60, adjustedState.targetFps)
         assertTrue(adjustedState.targetSizeWarning)
+    }
+
+    @Test
+    fun testTargetSizeWarning_onlyShownInTargetSizeMode() {
+        val baseState = CompressorUiState(
+            originalWidth = 3840,
+            originalHeight = 2160,
+            originalFps = 60f,
+            durationMs = 600_000L,
+            targetResolutionHeight = 2160,
+            targetFps = 60,
+            audioBitrate = 320_000,
+            audioBitrateLocked = true,
+            targetResolutionLocked = true,
+            targetFpsLocked = true
+        )
+        assertTrue(baseState.targetSizeMb < baseState.minimumSizeMb)
+
+        // Quality preset / default mode: no hard size limit, so no warning.
+        assertFalse(baseState.targetSizeWarning)
+
+        // Explicitly chosen target size: warning applies.
+        assertTrue(baseState.copy(useTargetSizeMode = true).targetSizeWarning)
     }
 
     @Test

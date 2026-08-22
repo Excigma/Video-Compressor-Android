@@ -49,6 +49,7 @@ data class CompressorUiState(
     // Configuration
     val activePreset: QualityPreset = QualityPreset.CUSTOM,
     val targetSizeMb: Float = 10f,
+    val useTargetSizeMode: Boolean = false,
     val useH265: Boolean = true,
     val videoCodec: String = MimeTypes.VIDEO_H265,
     val targetResolutionHeight: Int = 0, // 0 means original
@@ -92,7 +93,7 @@ data class CompressorUiState(
     )
 ) {
     val targetSizeWarning: Boolean
-        get() = durationMs > 0 && targetSizeMb < minimumSizeMb
+        get() = useTargetSizeMode && durationMs > 0 && targetSizeMb < minimumSizeMb
 
     /** Returns the settings autoAdjust would choose if user locks were released. */
     fun suggestedForTarget(): CompressorUiState {
@@ -154,6 +155,14 @@ data class CompressorUiState(
         get() {
             val actualTarget = targetSizeMb.coerceAtLeast(minimumSizeMb)
             return String.format(Locale.US, "%.1f MB", actualTarget)
+        }
+
+    val formattedTargetSize: String
+        get() = when {
+            targetSizeMb >= 1024f -> String.format(Locale.US, "%.2f GB", targetSizeMb / 1024f)
+            targetSizeMb < 1f -> String.format(Locale.US, "%.0f KB", targetSizeMb * 1024f)
+            targetSizeMb == targetSizeMb.toInt().toFloat() -> String.format(Locale.US, "%.0f MB", targetSizeMb)
+            else -> String.format(Locale.US, "%.1f MB", targetSizeMb)
         }
     
     val targetBitrate: Int

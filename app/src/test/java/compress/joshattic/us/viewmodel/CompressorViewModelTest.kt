@@ -100,6 +100,24 @@ class CompressorViewModelTest {
         viewModel.setTargetSize(25f)
         assertEquals(25f, viewModel.uiState.value.targetSizeMb, 0.01f)
         assertEquals(QualityPreset.CUSTOM, viewModel.uiState.value.activePreset)
+        assertTrue(viewModel.uiState.value.useTargetSizeMode)
+    }
+
+    @Test
+    fun testSetTargetSizePreview_doesNotEnableTargetSizeMode() {
+        viewModel.setTargetSizePreview(25f)
+        assertEquals(25f, viewModel.uiState.value.targetSizeMb, 0.01f)
+        assertFalse(viewModel.uiState.value.useTargetSizeMode)
+    }
+
+    @Test
+    fun testApplyPreset_resetsTargetSizeMode() {
+        viewModel.setTargetSize(25f)
+        assertTrue(viewModel.uiState.value.useTargetSizeMode)
+
+        viewModel.applyPreset(QualityPreset.MEDIUM)
+        assertFalse(viewModel.uiState.value.useTargetSizeMode)
+        assertEquals(QualityPreset.MEDIUM, viewModel.uiState.value.activePreset)
     }
 
     @Test

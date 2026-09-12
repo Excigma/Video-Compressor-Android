@@ -1,14 +1,17 @@
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.aboutlibraries.android)
 }
 
+// Kotlin compilation is provided by AGP's built-in Kotlin support (default since AGP 9.0);
+// the separate org.jetbrains.kotlin.android plugin is no longer applied. The Compose
+// compiler plugin is still required until AGP bundles it.
+
 android {
     namespace = "compress.joshattic.us"
     compileSdk {
-        version = release(36)
+        version = release(37)
     }
 
     defaultConfig {
@@ -34,9 +37,8 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
-    kotlinOptions {
-        jvmTarget = "11"
-    }
+    // Built-in Kotlin derives the Kotlin jvmTarget from compileOptions, so the
+    // deprecated kotlinOptions block is no longer needed.
     buildFeatures {
         compose = true
         buildConfig = true

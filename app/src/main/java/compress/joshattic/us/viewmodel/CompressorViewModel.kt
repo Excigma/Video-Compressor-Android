@@ -167,6 +167,10 @@ class CompressorViewModel(application: Application) : AndroidViewModel(applicati
         prefs.edit().putInt(PREF_SAVED_VERSION_CODE, CURRENT_VERSION_CODE).apply()
         _uiState.update { it.copy(showWhatsNewDialog = false) }
     }
+
+    fun showWhatsNewDialog() {
+        _uiState.update { it.copy(showWhatsNewDialog = true) }
+    }
     
     internal fun checkSupportedCodecs() {
         val allCodecsEnabled = prefs.getBoolean("all_codecs_enabled", false)

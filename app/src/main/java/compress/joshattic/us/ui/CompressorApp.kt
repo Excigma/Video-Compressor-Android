@@ -246,7 +246,8 @@ fun CompressorApp(viewModel: CompressorViewModel) {
                                 onEnableAllCodecs = { viewModel.enableAllCodecsFeature() },
                                 onDisableAllCodecs = { viewModel.disableAllCodecsFeature() },
                                 isSoftwareCodec = { viewModel.isSoftwareCodec(it) },
-                                onOpenLicenses = { currentSettingsDestination = SettingsDestination.LICENSES }
+                                onOpenLicenses = { currentSettingsDestination = SettingsDestination.LICENSES },
+                                onShowWhatsNew = { viewModel.showWhatsNewDialog() }
                             )
                             SettingsDestination.LICENSES -> LicensesScreen(
                                 onBack = { currentSettingsDestination = SettingsDestination.ABOUT }
